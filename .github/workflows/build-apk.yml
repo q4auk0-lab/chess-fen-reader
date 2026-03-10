@@ -1,0 +1,44 @@
+name: Build Flutter APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # Manuel tetikleme butonu
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Kodu çek
+        uses: actions/checkout@v4
+
+      - name: ☕ Java kur
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: 🐦 Flutter kur
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.3'
+          channel: 'stable'
+          cache: true  # Sonraki buildlerde hızlanır
+
+      - name: 📦 Bağımlılıkları yükle
+        run: flutter pub get
+
+      - name: 🔍 Analiz (opsiyonel)
+        run: flutter analyze --no-fatal-infos
+        continue-on-error: true
+
+      - name: 🏗 APK build et
+        run: flutter build apk --release --no-tree-shake-icons
+
+      - name: 📤 APK'yı kaydet
+        uses: actions/upload-artifact@v4
+        with:
+          name: chess-fen-reader-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30  # 30 gün indirilebilir kalır
