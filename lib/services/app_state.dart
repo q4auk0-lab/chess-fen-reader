@@ -1,4 +1,3 @@
-// lib/services/app_state.dart
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/chess_app.dart';
@@ -19,6 +18,7 @@ class AppState extends ChangeNotifier {
   AnalysisResult? _lastResult;
   String? _errorMessage;
   bool _autoCapture = false;
+  bool _engineReady = false;
 
   AppStatus get status => _status;
   ChessApp? get selectedApp => _selectedApp;
@@ -26,21 +26,29 @@ class AppState extends ChangeNotifier {
   AnalysisResult? get lastResult => _lastResult;
   String? get errorMessage => _errorMessage;
   bool get autoCapture => _autoCapture;
+  bool get engineReady => _engineReady;
 
   Future<void> init() async {
-    // Son seçilen uygulamayı yükle
-    final prefs = await SharedPreferences.getInstance();
-    final savedAppId = prefs.getString('selected_app_id');
-    if (savedAppId != null) {
-      _selectedApp = kSupportedApps.firstWhere(
-        (a) => a.id == savedAppId,
-        orElse: () => kSupportedApps.last,
-      );
-    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedAppId = prefs.getString('selected_app_id');
+      if (savedAppId != null) {
+        _selectedApp = kSupportedApps.firstWhere(
+          (a) => a.id == savedAppId,
+          orElse: () => kSupportedApps.last,
+        );
+      }
+      notifyListeners();
 
-    // Stockfish'i arka planda başlat
-    await _stockfish.initialize();
-    notifyListeners();
+      // Stockfish'i arka planda başlat, crash olursa sessizce geç
+      await _stockfish.initialize();
+      _engineReady = true;
+      notifyListeners();
+    } catch (e) {
+      _engineReady = false;
+      debugPrint('Init error: $e');
+      notifyListeners();
+    }
   }
 
   void selectApp(ChessApp app) async {
@@ -50,7 +58,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Ekranı yakala ve analiz et
   Future<void> captureAndAnalyze() async {
     if (_selectedApp == null) {
       _setError('Lütfen önce bir satranç uygulaması seçin.');
@@ -59,33 +66,36 @@ class AppState extends ChangeNotifier {
 
     _setStatus(AppStatus.capturing);
 
-    // 1. Ekran görüntüsü al
-    final screenshot = await _screenCapture.captureScreen();
-    if (screenshot == null) {
-      _setError('Ekran yakalama izni verilmedi veya başarısız oldu.');
-      return;
+    try {
+      final screenshot = await _screenCapture.captureScreen();
+      if (screenshot == null) {
+        _setError('Ekran yakalama izni verilmedi veya başarısız oldu.');
+        return;
+      }
+
+      _setStatus(AppStatus.analyzing);
+
+      final fen = await _boardDetection.detectFenFromScreenshot(
+        screenshot,
+        _selectedApp!.strategy,
+      );
+
+      if (fen == null) {
+        _setError('Satranç tahtası ekranda bulunamadı.');
+        return;
+      }
+
+      _currentFen = fen;
+
+      if (_engineReady) {
+        final result = await _stockfish.analyze(fen);
+        _lastResult = result;
+      }
+
+      _setStatus(AppStatus.done);
+    } catch (e) {
+      _setError('Hata: $e');
     }
-
-    _setStatus(AppStatus.analyzing);
-
-    // 2. FEN tespit et
-    final fen = await _boardDetection.detectFenFromScreenshot(
-      screenshot,
-      _selectedApp!.strategy,
-    );
-
-    if (fen == null) {
-      _setError('Satranç tahtası ekranda bulunamadı. Tahtanın tam görünür olduğundan emin olun.');
-      return;
-    }
-
-    _currentFen = fen;
-
-    // 3. Stockfish analizi
-    final result = await _stockfish.analyze(fen);
-    _lastResult = result;
-
-    _setStatus(AppStatus.done);
   }
 
   void toggleAutoCapture() {
