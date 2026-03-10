@@ -1,93 +1,122 @@
-// lib/services/board_detection_service.dart
 import 'dart:typed_data';
 import 'dart:math';
 import 'package:image/image.dart' as img;
 import '../models/chess_app.dart';
 
 class BoardDetectionService {
-  /// Ana metod: ekran görüntüsünden FEN üretir
   Future<String?> detectFenFromScreenshot(
     Uint8List screenshotBytes,
     BoardDetectionStrategy strategy,
   ) async {
-    final image = img.decodeImage(screenshotBytes);
-    if (image == null) return null;
+    try {
+      final image = img.decodeImage(screenshotBytes);
+      if (image == null) return null;
 
-    // 1. Tahta alanını bul
-    final boardRect = await _findBoardArea(image, strategy);
-    if (boardRect == null) return null;
+      final boardRect = _findBoardArea(image, strategy);
+      if (boardRect == null) return null;
 
-    // 2. Tahtayı kırp ve normalize et
-    final boardImage = img.copyCrop(
-      image,
-      x: boardRect.x,
-      y: boardRect.y,
-      width: boardRect.width,
-      height: boardRect.height,
-    );
+      final boardImage = img.copyCrop(
+        image,
+        x: boardRect.x,
+        y: boardRect.y,
+        width: boardRect.width,
+        height: boardRect.height,
+      );
 
-    // 3. 8x8 karelere böl
-    final squares = _splitIntoSquares(boardImage);
-
-    // 4. Her karedeki taşı tanı
-    final board = _recognizePieces(squares);
-
-    // 5. FEN'e dönüştür
-    return _boardToFen(board);
+      final squares = _splitIntoSquares(boardImage);
+      final board = _recognizePieces(squares, strategy);
+      return _boardToFen(board);
+    } catch (e) {
+      return null;
+    }
   }
 
-  /// Ekran görüntüsünde satranç tahtasını bul
-  Future<_Rect?> _findBoardArea(
-    img.Image image,
-    BoardDetectionStrategy strategy,
-  ) async {
+  _Rect? _findBoardArea(img.Image image, BoardDetectionStrategy strategy) {
     switch (strategy) {
       case BoardDetectionStrategy.chessCom:
-        return _findChessComBoard(image);
+        return _findBoardByColors(image,
+          darkR: 118, darkG: 150, darkB: 86,
+          lightR: 238, lightG: 238, lightB: 210, tolerance: 30);
       case BoardDetectionStrategy.lichess:
-        return _findLichessBoard(image);
+        return _findBoardByColors(image,
+          darkR: 70, darkG: 105, darkB: 140,
+          lightR: 211, lightG: 222, lightB: 228, tolerance: 30);
+      case BoardDetectionStrategy.duolingo:
+        // Duolingo: koyu tema - kareler birbirine çok yakın renkte
+        // Koyu kare: ~#2a2a2a, Açık kare: ~#3a3a3a
+        return _findDuolingoBoard(image);
       default:
         return _findGenericBoard(image);
     }
   }
 
-  /// Chess.com tahtası genellikle yeşil/bej renk şemasında
-  _Rect? _findChessComBoard(img.Image image) {
-    // Chess.com'da tahta merkeze yakın, kare oranlı
-    // Yeşil (#769656) ve açık kare (#eeeed2) renkleri ara
-    return _findBoardByColors(
-      image,
-      darkSquareColor: img.ColorRgb8(118, 150, 86),   // #769656
-      lightSquareColor: img.ColorRgb8(238, 238, 210),  // #eeeed2
-      tolerance: 30,
-    );
-  }
+  // Duolingo tahtası: tüm renkler koyu, grid pattern ile bul
+  _Rect? _findDuolingoBoard(img.Image image) {
+    // Ekranın ortasını ve alt yarısını tara (tahta genelde altta)
+    final w = image.width;
+    final h = image.height;
 
-  /// Lichess tahtası mavi tonlarda
-  _Rect? _findLichessBoard(img.Image image) {
-    return _findBoardByColors(
-      image,
-      darkSquareColor: img.ColorRgb8(70, 105, 140),    // #466a8c
-      lightSquareColor: img.ColorRgb8(211, 222, 228),   // #d3dee4
-      tolerance: 30,
-    );
-  }
+    // Küçük versiyonda ara
+    final small = img.copyResize(image, width: 300);
+    final scaleX = w / small.width;
+    final scaleY = h / small.height;
 
-  /// Genel tahta tespiti - grid pattern arar
-  _Rect? _findGenericBoard(img.Image image) {
-    final width = image.width;
-    final height = image.height;
-
-    // Görüntüyü küçült (hız için)
-    final small = img.copyResize(image, width: 200);
-    final scaleX = width / small.width;
-    final scaleY = height / small.height;
-
-    // Alternatif kare pattern ara (checkerboard)
     int bestScore = 0;
     _Rect? bestRect;
 
-    // Farklı konumları dene
+    // Duolingo'da tahta ekranın alt %70'inde
+    final startYSearch = (small.height * 0.2).round();
+
+    for (int startX = 0; startX < small.width - 100; startX += 8) {
+      for (int startY = startYSearch; startY < small.height - 80; startY += 8) {
+        for (int size = 80; size <= min(small.width - startX, small.height - startY); size += 10) {
+          final score = _evaluateDuolingoBoard(small, startX, startY, size);
+          if (score > bestScore) {
+            bestScore = score;
+            bestRect = _Rect(
+              x: (startX * scaleX).round(),
+              y: (startY * scaleY).round(),
+              width: (size * scaleX).round(),
+              height: (size * scaleY).round(),
+            );
+          }
+        }
+      }
+    }
+
+    return bestScore > 30 ? bestRect : null;
+  }
+
+  int _evaluateDuolingoBoard(img.Image image, int startX, int startY, int size) {
+    int score = 0;
+    final squareSize = size ~/ 8;
+    if (squareSize < 3) return 0;
+
+    for (int row = 0; row < 8; row++) {
+      for (int col = 0; col < 8; col++) {
+        final x = startX + col * squareSize + squareSize ~/ 2;
+        final y = startY + row * squareSize + squareSize ~/ 2;
+        if (x >= image.width || y >= image.height) continue;
+
+        final pixel = image.getPixel(x, y);
+        final brightness = (pixel.r + pixel.g + pixel.b) / 3;
+
+        // Duolingo'da her kare 20-80 arası parlaklıkta
+        // Checker pattern: komşu kareler birbirinden ~10-20 birim farklı
+        if (brightness >= 15 && brightness <= 90) score++;
+      }
+    }
+    return score;
+  }
+
+  _Rect? _findGenericBoard(img.Image image) {
+    final small = img.copyResize(image, width: 200);
+    final scaleX = image.width / small.width;
+    final scaleY = image.height / small.height;
+
+    int bestScore = 0;
+    _Rect? bestRect;
+
     for (int startX = 0; startX < small.width - 80; startX += 10) {
       for (int startY = 0; startY < small.height - 80; startY += 10) {
         for (int size = 60; size <= min(small.width - startX, small.height - startY); size += 10) {
@@ -104,51 +133,37 @@ class BoardDetectionService {
         }
       }
     }
-
     return bestScore > 50 ? bestRect : null;
   }
 
-  /// Renk bazlı tahta tespiti
-  _Rect? _findBoardByColors(
-    img.Image image, {
-    required img.Color darkSquareColor,
-    required img.Color lightSquareColor,
+  _Rect? _findBoardByColors(img.Image image, {
+    required int darkR, required int darkG, required int darkB,
+    required int lightR, required int lightG, required int lightB,
     required int tolerance,
   }) {
-    int darkCount = 0;
-    int lightCount = 0;
-    int minX = image.width, minY = image.height;
-    int maxX = 0, maxY = 0;
+    int minX = image.width, minY = image.height, maxX = 0, maxY = 0;
+    int matchCount = 0;
 
     for (int y = 0; y < image.height; y++) {
       for (int x = 0; x < image.width; x++) {
-        final pixel = image.getPixel(x, y);
-        if (_colorMatch(pixel, darkSquareColor, tolerance)) {
-          darkCount++;
-          minX = min(minX, x);
-          minY = min(minY, y);
-          maxX = max(maxX, x);
-          maxY = max(maxY, y);
-        } else if (_colorMatch(pixel, lightSquareColor, tolerance)) {
-          lightCount++;
-          minX = min(minX, x);
-          minY = min(minY, y);
-          maxX = max(maxX, x);
-          maxY = max(maxY, y);
+        final p = image.getPixel(x, y);
+        final isDark = (p.r - darkR).abs() < tolerance &&
+                       (p.g - darkG).abs() < tolerance &&
+                       (p.b - darkB).abs() < tolerance;
+        final isLight = (p.r - lightR).abs() < tolerance &&
+                        (p.g - lightG).abs() < tolerance &&
+                        (p.b - lightB).abs() < tolerance;
+        if (isDark || isLight) {
+          matchCount++;
+          minX = min(minX, x); minY = min(minY, y);
+          maxX = max(maxX, x); maxY = max(maxY, y);
         }
       }
     }
 
-    if (darkCount < 100 || lightCount < 100) return null;
-
+    if (matchCount < 100) return null;
     final size = max(maxX - minX, maxY - minY);
     return _Rect(x: minX, y: minY, width: size, height: size);
-  }
-
-  bool _colorMatch(img.Color pixel, img.Color target, int tolerance) {
-    return (pixel.r - target.r).abs() < tolerance &&
-           (pixel.g - target.g).abs() < tolerance &&
-           (pixel.b - target.b).abs() < tolerance;
   }
 
   int _evaluateCheckerboard(img.Image image, int startX, int startY, int size) {
@@ -161,12 +176,9 @@ class BoardDetectionService {
         final x = startX + col * squareSize + squareSize ~/ 2;
         final y = startY + row * squareSize + squareSize ~/ 2;
         if (x >= image.width || y >= image.height) continue;
-
         final pixel = image.getPixel(x, y);
         final brightness = (pixel.r + pixel.g + pixel.b) / 3;
         final isDark = (row + col) % 2 == 1;
-
-        // Checkerboard pattern match
         if (isDark && brightness < 150) score++;
         if (!isDark && brightness > 150) score++;
       }
@@ -174,86 +186,73 @@ class BoardDetectionService {
     return score;
   }
 
-  /// Tahtayı 64 kareye böl
   List<List<img.Image>> _splitIntoSquares(img.Image board) {
     final squareSize = board.width ~/ 8;
-    final squares = List.generate(8, (row) {
-      return List.generate(8, (col) {
-        return img.copyCrop(
-          board,
-          x: col * squareSize,
-          y: row * squareSize,
-          width: squareSize,
-          height: squareSize,
-        );
-      });
-    });
-    return squares;
+    return List.generate(8, (row) =>
+      List.generate(8, (col) =>
+        img.copyCrop(board,
+          x: col * squareSize, y: row * squareSize,
+          width: squareSize, height: squareSize)));
   }
 
-  /// Her karede taş tanıma (renk analizi + template matching)
-  List<List<String>> _recognizePieces(List<List<img.Image>> squares) {
+  List<List<String>> _recognizePieces(
+    List<List<img.Image>> squares,
+    BoardDetectionStrategy strategy,
+  ) {
     final board = List.generate(8, (r) => List.generate(8, (c) => '.'));
-
     for (int row = 0; row < 8; row++) {
       for (int col = 0; col < 8; col++) {
-        final square = squares[row][col];
-        board[row][col] = _identifyPiece(square, (row + col) % 2 == 1);
+        board[row][col] = _identifyPiece(
+          squares[row][col],
+          (row + col) % 2 == 1,
+          strategy,
+        );
       }
     }
-
     return board;
   }
 
-  /// Tek karede taş analizi
-  String _identifyPiece(img.Image square, bool isDarkSquare) {
-    // Merkez bölgeyi al
+  String _identifyPiece(img.Image square, bool isDarkSquare, BoardDetectionStrategy strategy) {
     final size = square.width;
-    final centerX = size ~/ 2;
-    final centerY = size ~/ 2;
+    final cx = size ~/ 2, cy = size ~/ 2;
     final radius = size ~/ 3;
 
-    int darkPixels = 0;
-    int lightPixels = 0;
-    int totalPixels = 0;
+    // Duolingo için özel eşikler (koyu tema)
+    final isDuolingo = strategy == BoardDetectionStrategy.duolingo;
+    final bgBrightness = isDuolingo
+        ? (isDarkSquare ? 35.0 : 50.0)   // Duolingo çok koyu
+        : (isDarkSquare ? 80.0 : 200.0);  // Normal temalar
 
-    // Kare rengi (beklenen arka plan)
-    final bgBrightness = isDarkSquare ? 80.0 : 200.0;
+    int darkPixels = 0, lightPixels = 0, totalPixels = 0;
 
-    for (int y = centerY - radius; y < centerY + radius; y++) {
-      for (int x = centerX - radius; x < centerX + radius; x++) {
+    for (int y = cy - radius; y < cy + radius; y++) {
+      for (int x = cx - radius; x < cx + radius; x++) {
         if (x < 0 || x >= size || y < 0 || y >= size) continue;
         final pixel = square.getPixel(x, y);
         final brightness = (pixel.r + pixel.g + pixel.b) / 3;
-
-        // Arka plandan sapma
-        if ((brightness - bgBrightness).abs() > 40) {
-          if (brightness < 100) darkPixels++;
-          if (brightness > 200) lightPixels++;
+        if ((brightness - bgBrightness).abs() > (isDuolingo ? 20 : 40)) {
+          if (brightness < (isDuolingo ? 60 : 100)) darkPixels++;
+          if (brightness > (isDuolingo ? 120 : 180)) lightPixels++;
         }
         totalPixels++;
       }
     }
 
+    if (totalPixels == 0) return '.';
     final darkRatio = darkPixels / totalPixels;
     final lightRatio = lightPixels / totalPixels;
+    if (darkRatio < 0.04 && lightRatio < 0.04) return '.';
 
-    // Taş yok
-    if (darkRatio < 0.05 && lightRatio < 0.05) return '.';
-
-    // Siyah taş (koyu piksel yoğunluğu)
     final isBlack = darkRatio > lightRatio;
-
-    // Taş tipini boyuta göre tahmin et
     final pieceArea = (darkPixels + lightPixels) / totalPixels;
 
     if (isBlack) {
-      if (pieceArea > 0.35) return 'q'; // Vezir - büyük
-      if (pieceArea > 0.28) return 'r'; // Kale
-      if (pieceArea > 0.22) return 'b'; // Fil
-      if (pieceArea > 0.15) return 'n'; // At
-      if (pieceArea > 0.08) return 'p'; // Piyon
-      return 'k';                        // Şah
+      if (pieceArea > 0.35) return 'q';
+      if (pieceArea > 0.28) return 'r';
+      if (pieceArea > 0.22) return 'b';
+      if (pieceArea > 0.15) return 'n';
+      if (pieceArea > 0.08) return 'p';
+      return 'k';
     } else {
       if (pieceArea > 0.35) return 'Q';
       if (pieceArea > 0.28) return 'R';
@@ -264,34 +263,24 @@ class BoardDetectionService {
     }
   }
 
-  /// 8x8 board array'ini FEN string'ine çevir
   String _boardToFen(List<List<String>> board) {
     final rows = <String>[];
-
     for (int row = 0; row < 8; row++) {
       final sb = StringBuffer();
-      int emptyCount = 0;
-
+      int empty = 0;
       for (int col = 0; col < 8; col++) {
         final piece = board[row][col];
         if (piece == '.') {
-          emptyCount++;
+          empty++;
         } else {
-          if (emptyCount > 0) {
-            sb.write(emptyCount);
-            emptyCount = 0;
-          }
+          if (empty > 0) { sb.write(empty); empty = 0; }
           sb.write(piece);
         }
       }
-
-      if (emptyCount > 0) sb.write(emptyCount);
+      if (empty > 0) sb.write(empty);
       rows.add(sb.toString());
     }
-
-    // FEN: piece placement + turn + castling + en passant + halfmove + fullmove
-    final piecePlacement = rows.join('/');
-    return '$piecePlacement w KQkq - 0 1';
+    return '${rows.join('/')} w KQkq - 0 1';
   }
 }
 
