@@ -1,6 +1,6 @@
 // lib/services/stockfish_service.dart
 import 'dart:async';
-import 'package:stockfish_chess_engine/stockfish_chess_engine.dart';
+import 'package:stockfish/stockfish.dart';
 import '../models/chess_app.dart';
 
 class StockfishService {
