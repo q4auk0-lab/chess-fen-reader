@@ -27,7 +27,7 @@
     <application
         android:label="Chess FEN Reader"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
+        
         android:allowBackup="false"
         android:hardwareAccelerated="true">
 
@@ -65,3 +65,4 @@
 
     </application>
 </manifest>
+
