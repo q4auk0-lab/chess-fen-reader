@@ -1,5 +1,3 @@
-// lib/models/chess_app.dart
-
 class ChessApp {
   final String id;
   final String name;
@@ -17,15 +15,22 @@ class ChessApp {
 }
 
 enum BoardDetectionStrategy {
-  chessCom,       // Chess.com specific layout
-  lichess,        // Lichess specific layout
-  generic,        // Generic board detection via image recognition
+  chessCom,
+  lichess,
+  duolingo,
   chessBase,
   chessKid,
+  generic,
 }
 
-// ─── Desteklenen Uygulamalar ────────────────────────────────────────────────
 const List<ChessApp> kSupportedApps = [
+  ChessApp(
+    id: 'duolingo',
+    name: 'Duolingo Chess',
+    packageName: 'com.duolingo',
+    iconAsset: 'assets/apps/duolingo.png',
+    strategy: BoardDetectionStrategy.duolingo,
+  ),
   ChessApp(
     id: 'chess_com',
     name: 'Chess.com',
@@ -55,22 +60,41 @@ const List<ChessApp> kSupportedApps = [
     strategy: BoardDetectionStrategy.chessBase,
   ),
   ChessApp(
-    id: 'stockfish_app',
-    name: 'Stockfish (Resmi)',
-    packageName: 'org.petero.droidfish',
-    iconAsset: 'assets/apps/stockfish.png',
+    id: 'other',
+    name: 'Diğer (Genel)',
+    packageName: '',
+    iconAsset: 'assets/apps/generic.png',
     strategy: BoardDetectionStrategy.generic,
   ),
-  ChessApp(
-    id: 'shredder',
-    name: 'Shredder Chess',
-    packageName: 'com.shredderchess.android',
-    iconAsset: 'assets/apps/shredder.png',
-    strategy: BoardDetectionStrategy.generic,
-  ),
-  ChessApp(
-    id: 'chess_tempo',
-    name: 'Chess Tempo',
+];
+
+class AnalysisResult {
+  final String fen;
+  final String bestMove;
+  final int evaluation;
+  final int depth;
+  final List<String> pv;
+  final DateTime timestamp;
+
+  AnalysisResult({
+    required this.fen,
+    required this.bestMove,
+    required this.evaluation,
+    required this.depth,
+    required this.pv,
+    required this.timestamp,
+  });
+
+  String get evalDisplay {
+    if (evaluation.abs() > 900) {
+      final mateIn = (evaluation > 0 ? 1 : -1) * ((1000 - evaluation.abs()) ~/ 100 + 1);
+      return 'M$mateIn';
+    }
+    final pawns = evaluation / 100.0;
+    return pawns >= 0 ? '+${pawns.toStringAsFixed(2)}' : pawns.toStringAsFixed(2);
+  }
+}
+
     packageName: 'com.chesstempo.android',
     iconAsset: 'assets/apps/generic.png',
     strategy: BoardDetectionStrategy.generic,
