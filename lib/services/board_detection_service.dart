@@ -218,7 +218,7 @@ class BoardDetectionService {
     final radius = size ~/ 3;
 
     // Duolingo için özel eşikler (koyu tema)
-    final isDuolingo = strategy == BoardDetectionStrategy.duolingo;
+    final isDuolingo = strategy == BoardDetectionStrategy.special;
     final bgBrightness = isDuolingo
         ? (isDarkSquare ? 35.0 : 50.0)   // Duolingo çok koyu
         : (isDarkSquare ? 80.0 : 200.0);  // Normal temalar
