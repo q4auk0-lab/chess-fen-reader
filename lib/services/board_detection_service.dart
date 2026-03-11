@@ -41,7 +41,7 @@ class BoardDetectionService {
         return _findBoardByColors(image,
           darkR: 70, darkG: 105, darkB: 140,
           lightR: 211, lightG: 222, lightB: 228, tolerance: 30);
-      case BoardDetectionStrategy.duolingo:
+      case BoardDetectionStrategy.special:
         // Duolingo: koyu tema - kareler birbirine çok yakın renkte
         // Koyu kare: ~#2a2a2a, Açık kare: ~#3a3a3a
         return _findDuolingoBoard(image);
