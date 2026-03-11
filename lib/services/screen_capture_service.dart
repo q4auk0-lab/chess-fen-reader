@@ -1,45 +1,46 @@
-package com.chessfen.app
+// lib/services/screen_capture_service.dart
+import 'dart:typed_data';
+import 'package:flutter/services.dart';
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.Service
-import android.content.Intent
-import android.os.Build
-import android.os.IBinder
-import androidx.core.app.NotificationCompat
+class ScreenCaptureService {
+  static const _channel = MethodChannel('com.chessfen.app/screen_capture');
+  bool _hasPermission = false;
 
-class ScreenCaptureService : Service() {
-    private val CHANNEL_ID = "chess_fen_capture"
-    private val NOTIF_ID = 1
+  /// MediaProjection izni iste
+  Future<bool> requestPermission() async {
+    try {
+      final granted = await _channel.invokeMethod<bool>('requestPermission');
+      _hasPermission = granted ?? false;
+      return _hasPermission;
+    } catch (e) {
+      return false;
+    }
+  }
 
-    override fun onCreate() {
-        super.onCreate()
-        createNotificationChannel()
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Chess FEN Reader")
-            .setContentText("Ekran yakalanıyor...")
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-        startForeground(NOTIF_ID, notification)
+  /// Mevcut ekranın görüntüsünü al
+  Future<Uint8List?> captureScreen() async {
+    if (!_hasPermission) {
+      final granted = await requestPermission();
+      if (!granted) return null;
     }
 
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Ekran Yakalama",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(channel)
-        }
+    try {
+      final bytes = await _channel.invokeMethod<Uint8List>('captureScreen');
+      return bytes;
+    } on PlatformException catch (e) {
+      print('Screen capture error: ${e.message}');
+      return null;
     }
+  }
 
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return START_STICKY
+  /// Sürekli yakalama başlat (her N milisaniyede bir)
+  Stream<Uint8List> continuousCapture({int intervalMs = 1000}) async* {
+    while (true) {
+      final screenshot = await captureScreen();
+      if (screenshot != null) yield screenshot;
+      await Future.delayed(Duration(milliseconds: intervalMs));
     }
+  }
+
+  bool get hasPermission => _hasPermission;
 }
